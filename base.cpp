@@ -1,0 +1,114 @@
+#include <string.h>
+#include <iostream>
+#include <stdio.h>
+#include <unistd.h>
+#include <cstdlib>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <string>
+#include <netdb.h>
+
+#include "message.h" 
+
+
+using namespace std;
+
+int main(int argc, char *argv[])
+{
+
+	char server_host[20];
+	int tcp_port;
+ 	UDP_Cntr_MSG ctrl_msg;
+        Sensor_MSG ssr_msg;
+        int mesglen;
+       
+	// get arguments from the command line (remote host, remote port, num samples, interval)
+	if ( (argc != 9))
+	{
+		cout << "Usage: " << argv[0];
+		cout << " - h <remote-host> -p <remote tcp_port> -n <numsamples> -i <interval>" << endl;
+		return -1;
+	}
+
+	for (int i = 1; i < argc; i++)
+	{
+		if (strcmp(argv[i], "-h") == 0)
+			strcpy (server_host, argv[++i]);
+		
+		if (strcmp(argv[i], "-p") == 0)
+			tcp_port = atoi(argv[++i]);
+		
+		if (strcmp(argv[i], "-n") == 0)
+			ctrl_msg.numsamples = atoi(argv[++i]);
+	
+		if (strcmp(argv[i], "-i") == 0)
+			ctrl_msg.interval = atoi(argv[++i]);
+	}
+
+	cout <<"base is running ...\n";
+
+	cout  << "remote host: " << server_host <<", remote TCP port: "
+                << tcp_port <<", numsamples: " << ctrl_msg.numsamples 
+                << ", interval: "<< ctrl_msg.interval <<endl;
+
+	// create TCP socket
+	int tcp_socket = socket(AF_INET, SOCK_STREAM,0);
+	if(tcp_socket< 0 )
+	{
+		cerr << "base: failed to create TCP socket. Exiting." << endl;
+		return -1;
+	}
+
+	// get IP address of sensor host via DNS
+        sockaddr_in remote;
+        int rlen = sizeof(remote) ; // length of remote address
+        hostent *hp;
+        remote.sin_family = AF_INET;
+        remote.sin_port=tcp_port;
+        hp = gethostbyname(server_host);
+        memcpy(&remote.sin_addr,hp->h_addr,hp->h_length);
+
+	// connect to the sensor program
+        if (connect(tcp_socket,(struct sockaddr *)&remote,sizeof (remote))<0){
+            cout<<"connection error"<<endl;
+            close(tcp_socket);
+            exit(1);
+        }
+        
+	// create and bind a UDP socket, letting the OS choose the port number
+        int udp_socket = socket(AF_INET,SOCK_DGRAM,0);
+        sockaddr_in local;
+        local.sin_family=AF_INET;
+        local.sin_addr.s_addr=INADDR_ANY;
+        if (udp_socket<0){
+            cerr<< "sensor: failed to create UDP socket. Exiting."<<endl;
+            return -1;
+        }
+        
+        local.sin_port = 0; //let system choose the port
+        
+        //bind the name
+        bind(udp_socket,(struct sockaddr *)&local,sizeof(local));
+
+	// get the port number assigned by the OS
+        socklen_t slen = sizeof(sockaddr_in);
+        getsockname(udp_socket,(struct sockaddr *)&local,&slen);
+
+	// put the port number in the control message and send it to the server
+        ctrl_msg.port = local.sin_port;
+        write(tcp_socket,&ctrl_msg,sizeof(ctrl_msg));
+        cout<<"base UDP port is "<<ctrl_msg.port<<endl;
+
+	// loop, receiving a message from the sensor and printing out the value
+        for (int i=0; i<ctrl_msg.numsamples ;i++ ){
+            mesglen = read(udp_socket,&ssr_msg,sizeof(ssr_msg));
+            cout<<"Sensor sample "<<ssr_msg.sequence<<" " << ssr_msg.value<<endl;
+        }
+
+	// close the two sockets
+        close(tcp_socket);
+        close(udp_socket);
+        
+
+}	
